@@ -5,9 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b1220" />
     <title>Detector de Sismos</title>
+    <style>
+      body{margin:0;font-family:Arial,sans-serif;background:#0b1220;color:white}
+      #root{min-height:100vh}
+      .cargando{padding:40px;text-align:center}
+      .cargando h1{font-size:30px}
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div id="root">
+      <div class="cargando">
+        <h1>Detector de Sismos</h1>
+        <p>Cargando aplicación...</p>
+      </div>
+    </div>
+    <script type="module" src="/detector-de-sismos/src/main.tsx"></script>
   </body>
 </html>
