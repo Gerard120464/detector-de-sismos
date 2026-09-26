@@ -1,46 +1,72 @@
 import { useState } from "react";
 
-const SERVICE_UUID = "7d6a1000-3c6e-4f72-9d41-8b2c5a910001";
-const TX_UUID = "7d6a1000-3c6e-4f72-9d41-8b2c5a910002";
-const RX_UUID = "7d6a1000-3c6e-4f72-9d41-8b2c5a910003";
+const ESP32_URL = "http://192.168.4.1";
 
 export default function App() {
-  const [device, setDevice] = useState<BluetoothDevice | null>(null);
+  const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState("Desconectado");
   const [response, setResponse] = useState("");
 
-  async function connect() {
+  async function connectWiFi() {
     try {
-      setStatus("Buscando...");
-      const d = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "DETECTOR-SISMOS-01" }],
-        optionalServices: [SERVICE_UUID]
+      setStatus("Buscando ESP32...");
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const r = await fetch(`${ESP32_URL}/estado`, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
       });
-      const server = await d.gatt!.connect();
-      const service = await server.getPrimaryService(SERVICE_UUID);
-      const tx = await service.getCharacteristic(TX_UUID);
-      const rx = await service.getCharacteristic(RX_UUID);
-      await tx.startNotifications();
-      tx.addEventListener("characteristicvaluechanged", (e) => {
-        const v = (e.target as BluetoothRemoteGATTCharacteristic).value;
-        if (v) setResponse(new TextDecoder().decode(v));
-      });
-      setDevice(d);
-      setStatus("Conectado");
-      (window as any).__detectorRx = rx;
+
+      clearTimeout(timeout);
+
+      if (!r.ok) {
+        throw new Error(`HTTP ${r.status}`);
+      }
+
+      const data = await r.json();
+
+      setConnected(true);
+      setStatus("Conectado por Wi-Fi");
+      setResponse(JSON.stringify(data, null, 2));
     } catch (e) {
+      setConnected(false);
       setStatus("No conectado");
-      setResponse(String(e));
+      setResponse(
+        e instanceof Error
+          ? `${e.name}: ${e.message}`
+          : String(e)
+      );
     }
   }
 
-  async function send(command: string) {
+  async function request(path: string) {
     try {
-      const rx = (window as any).__detectorRx as BluetoothRemoteGATTCharacteristic;
-      if (!rx) throw new Error("Conecte primero el detector.");
-      await rx.writeValue(new TextEncoder().encode(command));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
+      const r = await fetch(`${ESP32_URL}${path}`, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!r.ok) {
+        throw new Error(`HTTP ${r.status}`);
+      }
+
+      const text = await r.text();
+      setResponse(text);
     } catch (e) {
-      setResponse(String(e));
+      setResponse(
+        e instanceof Error
+          ? `${e.name}: ${e.message}`
+          : String(e)
+      );
     }
   }
 
@@ -49,23 +75,43 @@ export default function App() {
       <header>
         <div>
           <h1>Detector de Sismos</h1>
-          <p>Control y comunicación BLE con ESP32-C3</p>
+          <p>Control y comunicación Wi-Fi con ESP32-C3</p>
         </div>
-        <span className={device ? "ok" : "offline"}>{status}</span>
+        <span className={connected ? "ok" : "offline"}>
+          {status}
+        </span>
       </header>
 
       <section className="card">
         <h2>Detector</h2>
-        <p className="device">{device?.name ?? "DETECTOR-SISMOS-01"}</p>
-        <button onClick={connect}>Conectar por BLE</button>
+        <p className="device">DETECTOR-SISMOS-01</p>
+        <p>Red Wi-Fi: <strong>SISMOS-01</strong></p>
+        <p>ESP32: <strong>192.168.4.1</strong></p>
+
+        <button onClick={connectWiFi}>
+          Conectar por Wi-Fi
+        </button>
       </section>
 
       <section className="card">
         <h2>Prueba de comunicación</h2>
+
         <div className="buttons">
-          <button disabled={!device} onClick={() => send("PING")}>PING</button>
-          <button disabled={!device} onClick={() => send("ESTADO")}>ESTADO</button>
+          <button
+            disabled={!connected}
+            onClick={() => request("/ping")}
+          >
+            PING
+          </button>
+
+          <button
+            disabled={!connected}
+            onClick={() => request("/estado")}
+          >
+            ESTADO
+          </button>
         </div>
+
         <pre>{response || "Sin respuesta"}</pre>
       </section>
     </main>
