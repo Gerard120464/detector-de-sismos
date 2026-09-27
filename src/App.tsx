@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-const ESP32_URL="http://192.168.4.1";
+const ESP32_URL="/esp32";
 type Evento={id:number;estado?:string;duracion_s?:number;pga_t?:number;rms?:number;frecuencia_hz?:number;nivel?:string};
 type Punto={t_s:number;x_g:number;y_g:number;z_g:number};
 type Onda={id:number;frecuencia_muestreo_hz:number;muestras:Punto[]};
