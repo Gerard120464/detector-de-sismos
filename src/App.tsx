@@ -1,53 +1,37 @@
 import { useEffect, useRef, useState } from "react";
 
-const ESP32_URL = "http://192.168.4.1";
+const ESP32_URL="http://192.168.4.1";
 type Evento={id:number;estado?:string;duracion_s?:number;pga_t?:number;rms?:number;frecuencia_hz?:number;nivel?:string};
 type Punto={t_s:number;x_g:number;y_g:number;z_g:number};
 type Onda={id:number;frecuencia_muestreo_hz:number;muestras:Punto[]};
+type WifiStatus={ap_ssid?:string;ap_ip?:string;sta_configured?:boolean;sta_ssid?:string;sta_connected?:boolean;sta_ip?:string;rssi?:number};
+type WifiNetwork={ssid:string;rssi?:number;seguridad?:number};
 
-function Grafica({onda}:{onda:Onda}){
-  const W=900,H=300,P=34,ps=onda.muestras;
-  if(!ps.length)return <p className="muted">Sin muestras del evento.</p>;
-  const max=Math.max(.001,...ps.map(p=>Math.max(Math.abs(p.x_g),Math.abs(p.y_g),Math.abs(p.z_g))));
-  const tmax=Math.max(.1,ps[ps.length-1].t_s);
-  const X=(t:number)=>P+t/tmax*(W-2*P),Y=(v:number)=>H/2-v/max*(H/2-P);
-  const path=(a:"x_g"|"y_g"|"z_g")=>ps.map((p,i)=>`${i?"L":"M"}${X(p.t_s).toFixed(1)},${Y(p[a]).toFixed(1)}`).join(" ");
-  return <div className="event-chart-wrap"><svg className="event-chart" viewBox={`0 0 ${W} ${H}`} aria-label="Forma de onda del evento">
-    <line x1={P} x2={W-P} y1={H/2} y2={H/2} className="chart-axis"/><line x1={P} x2={P} y1={P} y2={H-P} className="chart-axis"/>
-    <path d={path("x_g")} className="wave wave-x"/><path d={path("y_g")} className="wave wave-y"/><path d={path("z_g")} className="wave wave-z"/>
-    <text x={P} y="18" className="chart-label">+{max.toFixed(3)} g</text><text x={P} y={H-8} className="chart-label">-{max.toFixed(3)} g</text><text x={W-P} y={H-8} textAnchor="end" className="chart-label">{tmax.toFixed(1)} s</text>
-  </svg><div className="legend"><span><i className="legend-x"/> X</span><span><i className="legend-y"/> Y</span><span><i className="legend-z"/> Z</span><span>{ps.length} muestras · {onda.frecuencia_muestreo_hz} Hz</span></div></div>;
-}
+function Grafica({onda}:{onda:Onda}){const W=900,H=300,P=34,ps=onda.muestras;if(!ps.length)return <p className="muted">Sin muestras del evento.</p>;const max=Math.max(.001,...ps.map(p=>Math.max(Math.abs(p.x_g),Math.abs(p.y_g),Math.abs(p.z_g))));const tmax=Math.max(.1,ps[ps.length-1].t_s);const X=(t:number)=>P+t/tmax*(W-2*P),Y=(v:number)=>H/2-v/max*(H/2-P);const path=(a:"x_g"|"y_g"|"z_g")=>ps.map((p,i)=>`${i?"L":"M"}${X(p.t_s).toFixed(1)},${Y(p[a]).toFixed(1)}`).join(" ");return <div className="event-chart-wrap"><svg className="event-chart" viewBox={`0 0 ${W} ${H}`}><line x1={P} x2={W-P} y1={H/2} y2={H/2} className="chart-axis"/><line x1={P} x2={P} y1={P} y2={H-P} className="chart-axis"/><path d={path("x_g")} className="wave wave-x"/><path d={path("y_g")} className="wave wave-y"/><path d={path("z_g")} className="wave wave-z"/><text x={P} y="18" className="chart-label">+{max.toFixed(3)} g</text><text x={P} y={H-8} className="chart-label">-{max.toFixed(3)} g</text><text x={W-P} y={H-8} textAnchor="end" className="chart-label">{tmax.toFixed(1)} s</text></svg><div className="legend"><span><i className="legend-x"/> X</span><span><i className="legend-y"/> Y</span><span><i className="legend-z"/> Z</span><span>{ps.length} muestras · {onda.frecuencia_muestreo_hz} Hz</span></div></div>}
 
 export default function App(){
-  const[connected,setConnected]=useState(false),[status,setStatus]=useState("Desconectado"),[response,setResponse]=useState("");
-  const[evento,setEvento]=useState<Evento|null>(null),[onda,setOnda]=useState<Onda|null>(null),[ondaError,setOndaError]=useState("");
-  const lastId=useRef<number|null>(null);
+ const[connected,setConnected]=useState(false),[status,setStatus]=useState("Desconectado"),[response,setResponse]=useState("");
+ const[evento,setEvento]=useState<Evento|null>(null),[onda,setOnda]=useState<Onda|null>(null),[ondaError,setOndaError]=useState("");const lastId=useRef<number|null>(null);
+ const[wifi,setWifi]=useState<WifiStatus|null>(null),[redes,setRedes]=useState<WifiNetwork[]>([]),[escaneando,setEscaneando]=useState(false),[ssid,setSsid]=useState(""),[clave,setClave]=useState(""),[wifiMsg,setWifiMsg]=useState("");
 
-  async function estado(){
-    const c=new AbortController(),to=setTimeout(()=>c.abort(),5000);
-    try{const r=await fetch(`${ESP32_URL}/estado`,{cache:"no-store",signal:c.signal});if(!r.ok)throw Error(`HTTP ${r.status}`);
-      const d=await r.json();setConnected(true);setStatus("Conectado por Wi-Fi");setEvento(d.ultimo_evento??null);return d;
-    }finally{clearTimeout(to);}
-  }
-  async function cargarOnda(id:number){
-    try{setOndaError("");const r=await fetch(`${ESP32_URL}/evento?id=${id}`,{cache:"no-store"});if(!r.ok)throw Error(`HTTP ${r.status}`);
-      setOnda(await r.json());lastId.current=id;
-    }catch(e){setOnda(null);setOndaError(e instanceof Error?e.message:String(e));}
-  }
-  async function connectWiFi(){
-    try{setStatus("Buscando ESP32...");const d=await estado();setResponse(JSON.stringify(d,null,2));if(d.ultimo_evento?.id)await cargarOnda(d.ultimo_evento.id);}
-    catch(e){setConnected(false);setStatus("No conectado");setResponse(e instanceof Error?`${e.name}: ${e.message}`:String(e));}
-  }
-  async function request(path:string){
-    try{const r=await fetch(`${ESP32_URL}${path}`,{cache:"no-store"});if(!r.ok)throw Error(`HTTP ${r.status}`);setResponse(await r.text());}
-    catch(e){setResponse(e instanceof Error?`${e.name}: ${e.message}`:String(e));}
-  }
-  useEffect(()=>{if(!connected)return;const timer=setInterval(async()=>{try{const d=await estado();const id=d.ultimo_evento?.id as number|undefined;if(id&&id!==lastId.current)await cargarOnda(id);}catch{setConnected(false);setStatus("Sin comunicación");}},1000);return()=>clearInterval(timer);},[connected]);
+ async function estado(){const c=new AbortController(),to=setTimeout(()=>c.abort(),5000);try{const r=await fetch(`${ESP32_URL}/estado`,{cache:"no-store",signal:c.signal});if(!r.ok)throw Error(`HTTP ${r.status}`);const d=await r.json();setConnected(true);setStatus("Conectado por Wi-Fi");setEvento(d.ultimo_evento??null);return d}finally{clearTimeout(to)}}
+ async function cargarOnda(id:number){try{setOndaError("");const r=await fetch(`${ESP32_URL}/evento?id=${id}`,{cache:"no-store"});if(!r.ok)throw Error(`HTTP ${r.status}`);setOnda(await r.json());lastId.current=id}catch(e){setOnda(null);setOndaError(e instanceof Error?e.message:String(e))}}
+ async function cargarWifi(){try{const r=await fetch(`${ESP32_URL}/wifi/status`,{cache:"no-store"});if(r.ok)setWifi(await r.json())}catch{}}
+ async function conectar(){try{setStatus("Buscando ESP32...");const d=await estado();setResponse(JSON.stringify(d,null,2));if(d.ultimo_evento?.id)await cargarOnda(d.ultimo_evento.id);await cargarWifi()}catch(e){setConnected(false);setStatus("No conectado");setResponse(e instanceof Error?`${e.name}: ${e.message}`:String(e))}}
+ async function request(path:string,options?:RequestInit){try{const r=await fetch(`${ESP32_URL}${path}`,{cache:"no-store",...options});if(!r.ok)throw Error(`HTTP ${r.status}`);const t=await r.text();setResponse(t);return t}catch(e){setResponse(e instanceof Error?`${e.name}: ${e.message}`:String(e));throw e}}
+ async function buscarRedes(){setEscaneando(true);setWifiMsg("Escaneando redes Wi-Fi...");setRedes([]);try{const r=await fetch(`${ESP32_URL}/wifi/scan`);if(!r.ok)throw Error(`HTTP ${r.status}`);for(let i=0;i<30;i++){await new Promise(x=>setTimeout(x,500));const q=await fetch(`${ESP32_URL}/wifi/scan?resultado=1`,{cache:"no-store"});if(!q.ok)continue;const d=await q.json();if(d.estado==="ESCANEANDO")continue;if(d.estado==="LISTO"){setRedes(d.redes??[]);setWifiMsg(`${(d.redes??[]).length} redes encontradas.`);break}if(d.estado==="SIN_RESULTADO"){setWifiMsg("No se obtuvo resultado del escaneo.");break}}}catch(e){setWifiMsg(`Error al escanear: ${e instanceof Error?e.message:String(e)}`)}finally{setEscaneando(false)}}
+ async function guardarWifi(){if(!ssid){setWifiMsg("Seleccione una red.");return}setWifiMsg("Enviando configuración al ESP32...");try{const body=new URLSearchParams({ssid,password:clave});const r=await fetch(`${ESP32_URL}/wifi/config`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});if(!r.ok)throw Error(`HTTP ${r.status}`);setResponse(await r.text());setWifiMsg("Configuración guardada. El ESP32 está conectándose a Internet.");setTimeout(()=>void cargarWifi(),1500);setTimeout(()=>void cargarWifi(),5000)}catch(e){setWifiMsg(`Error: ${e instanceof Error?e.message:String(e)}`)}}
+ async function olvidarWifi(){if(!confirm("¿Borrar la red Wi-Fi guardada?"))return;try{await request("/wifi/forget",{method:"POST"});setWifiMsg("Red borrada. SISMOS-01 continúa activa.");setClave("");await cargarWifi()}catch{}}
+ useEffect(()=>{if(!connected)return;const timer=setInterval(async()=>{try{const d=await estado();const id=d.ultimo_evento?.id as number|undefined;if(id&&id!==lastId.current)await cargarOnda(id);await cargarWifi()}catch{setConnected(false);setStatus("Sin comunicación")}},1000);return()=>clearInterval(timer)},[connected]);
 
-  return <main><header><div><h1>Detector de Sismos</h1><p>Control y comunicación Wi-Fi con ESP32 de 38 pines</p></div><span className={connected?"ok":"offline"}>{status}</span></header>
-    <section className="card"><h2>Detector</h2><p className="device">DETECTOR-SISMOS-01</p><p>Red Wi-Fi: <strong>SISMOS-01</strong></p><p>ESP32: <strong>192.168.4.1</strong></p><button onClick={connectWiFi}>Conectar por Wi-Fi</button></section>
-    <section className="card"><h2>Evento registrado</h2>{!evento?<p className="muted">No hay eventos registrados.</p>:<><div className="event-summary"><strong>EVENTO #{evento.id}</strong><span>{evento.nivel??"-"}</span><span>{Number(evento.duracion_s??0).toFixed(2)} s</span><span>PGA {Number(evento.pga_t??0).toFixed(5)} g</span><span>RMS {Number(evento.rms??0).toFixed(5)} g</span><span>{Number(evento.frecuencia_hz??0).toFixed(3)} Hz</span></div>{onda?<Grafica onda={onda}/>:<p className="muted">Cargando forma de onda...</p>}{ondaError&&<p className="error">Forma de onda: {ondaError}</p>}</>}</section>
-    <section className="card"><h2>Prueba de comunicación</h2><div className="buttons"><button disabled={!connected} onClick={()=>request("/ping")}>PING</button><button disabled={!connected} onClick={()=>request("/estado")}>ESTADO</button></div><pre>{response||"Sin respuesta"}</pre></section>
-  </main>;
+ return <main><header><div><h1>Detector de Sismos</h1><p>Control y comunicación Wi-Fi con ESP32 de 38 pines</p></div><span className={connected?"ok":"offline"}>{status}</span></header>
+ <section className="card"><h2>Detector</h2><p className="device">DETECTOR-SISMOS-01</p><p>Red Wi-Fi local: <strong>SISMOS-01</strong></p><p>ESP32: <strong>192.168.4.1</strong></p><button onClick={conectar}>Conectar por Wi-Fi</button></section>
+ <section className="card"><h2>Wi-Fi de Internet</h2><p className="muted">SISMOS-01 permanece activa mientras el ESP32 se conecta al Wi-Fi seleccionado.</p>
+ <div className="wifi-status-grid"><div><strong>Red</strong><span>{wifi?.sta_ssid||"Sin configurar"}</span></div><div><strong>Internet</strong><span className={wifi?.sta_connected?"status-good":"status-warn"}>{wifi?.sta_connected?"Conectado":"No conectado"}</span></div><div><strong>IP Internet</strong><span>{wifi?.sta_ip||"-"}</span></div><div><strong>IP SISMOS-01</strong><span>{wifi?.ap_ip||"192.168.4.1"}</span></div></div>
+ <div className="buttons"><button disabled={!connected||escaneando} onClick={buscarRedes}>{escaneando?"Escaneando...":"🔍 Buscar redes"}</button><button disabled={!connected} onClick={cargarWifi}>Actualizar estado</button></div>
+ {redes.length>0&&<label className="field"><span>Red Wi-Fi</span><select value={ssid} onChange={e=>setSsid(e.target.value)}><option value="">Seleccione una red...</option>{redes.map((r,i)=><option key={`${r.ssid}-${i}`} value={r.ssid}>{r.ssid||"(oculta)"} {typeof r.rssi==="number"?`· ${r.rssi} dBm`:""}</option>)}</select></label>}
+ <label className="field"><span>Contraseña</span><input type="password" value={clave} onChange={e=>setClave(e.target.value)} placeholder="Contraseña de la red Wi-Fi" autoComplete="off"/></label>
+ <div className="buttons"><button disabled={!connected||!ssid} onClick={guardarWifi}>Conectar ESP32 a Internet</button><button className="danger" disabled={!connected} onClick={olvidarWifi}>Borrar configuración</button></div>{wifiMsg&&<p className={wifiMsg.startsWith("Error")?"error":"wifi-message"}>{wifiMsg}</p>}</section>
+ <section className="card"><h2>Evento registrado</h2>{!evento?<p className="muted">No hay eventos registrados.</p>:<><div className="event-summary"><strong>EVENTO #{evento.id}</strong><span>{evento.nivel??"-"}</span><span>{Number(evento.duracion_s??0).toFixed(2)} s</span><span>PGA {Number(evento.pga_t??0).toFixed(5)} g</span><span>RMS {Number(evento.rms??0).toFixed(5)} g</span><span>{Number(evento.frecuencia_hz??0).toFixed(3)} Hz</span></div>{onda?<Grafica onda={onda}/>:<p className="muted">Cargando forma de onda...</p>}{ondaError&&<p className="error">Forma de onda: {ondaError}</p>}</>}</section>
+ <section className="card"><h2>Prueba de comunicación</h2><div className="buttons"><button disabled={!connected} onClick={()=>request("/ping")}>PING</button><button disabled={!connected} onClick={()=>request("/estado")}>ESTADO</button></div><pre>{response||"Sin respuesta"}</pre></section></main>
 }
