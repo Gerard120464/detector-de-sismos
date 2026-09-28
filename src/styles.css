@@ -2,3 +2,5 @@
 .dashboard-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:0 0 16px}.status-card{background:#121c2e;border:1px solid #26344d;border-radius:14px;padding:15px;min-height:108px;display:flex;flex-direction:column;justify-content:space-between}.status-title{font-size:12px;text-transform:uppercase;color:#8798b3;letter-spacing:.04em}.status-card strong{font-size:20px}.status-card small{color:#aebbd0;font-size:12px}.status-online{color:#70d394}.status-offline{color:#ff9b9b}
 @media(max-width:850px){.dashboard-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:500px){main{padding:18px 12px}.dashboard-grid{grid-template-columns:1fr}.status-card{min-height:90px}.card{padding:16px}.event-chart{min-height:210px}}
+
+.history-table tbody tr{cursor:pointer;transition:background .15s ease}.history-table tbody tr:hover{background:#18263d}.history-selected{outline:1px solid #2b6cff;background:#162849!important}.history-selected td:first-child{font-weight:800;color:#8fb4ff}
