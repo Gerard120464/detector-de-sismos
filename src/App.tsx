@@ -15,7 +15,7 @@ function Grafica({onda}:{onda:Onda}){const W=900,H=300,P=34,ps=onda.muestras;if(
 export default function App(){
  const[connected,setConnected]=useState(false),[status,setStatus]=useState("Desconectado"),[response,setResponse]=useState("");
  const[evento,setEvento]=useState<Evento|null>(null),[onda,setOnda]=useState<Onda|null>(null),[ondaError,setOndaError]=useState("");
- const[historial,setHistorial]=useState<HistoricoEvento[]>([]);const[eventoSeleccionado,setEventoSeleccionado]=useState<number|null>(null);=useRef<number|null>(null);
+ const[historial,setHistorial]=useState<HistoricoEvento[]>([]);const[eventoSeleccionado,setEventoSeleccionado]=useState<number|null>(null);const lastId=useRef<number|null>(null);
  const[wifi,setWifi]=useState<WifiStatus|null>(null),[redes,setRedes]=useState<WifiNetwork[]>([]),[escaneando,setEscaneando]=useState(false),[ssid,setSsid]=useState(""),[clave,setClave]=useState(""),[wifiMsg,setWifiMsg]=useState("");
 
  async function estado(){const r=await espFetch(`/estado`);if(!r.ok)throw Error(`HTTP ${r.status}`);const d=await r.json();setConnected(true);setStatus("Conectado por Wi-Fi");setEvento(d.ultimo_evento??null);return d}
