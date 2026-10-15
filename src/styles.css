@@ -17,5 +17,15 @@
 .config-campo input:disabled{opacity:.7}
 button.danger{background:#7a2d3a}
 .wifi-message{color:#9dffb8;margin:12px 0 0}
+.field{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.field>span{font-size:13px;font-weight:700;color:#9eb4d4}
+.field input,.field select{border:1px solid #2a3f5f;background:#09101c;color:#e8eef8;border-radius:8px;padding:10px 12px;font-size:15px;width:100%}
+.wifi-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+.wifi-status-grid>div{display:flex;flex-direction:column;gap:4px;background:#0b1526;border:1px solid #26344d;border-radius:10px;padding:10px 12px}
+.wifi-status-grid strong{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#8798b3;font-weight:700}
+.wifi-status-grid span{font-size:15px;word-break:break-all}
+.status-good{color:#70d394}
+.status-warn{color:#f2c14e}
+@media(max-width:500px){.wifi-status-grid{grid-template-columns:1fr}}
 @media(max-width:700px){.config-grid{grid-template-columns:1fr}}
 .chart-key-values{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 8px;font-size:13px;color:#aebbd0}
