@@ -4,13 +4,23 @@ import { PARAMETROS_CONFIG, parsearConfig, type DetectorConfig } from "./configP
 
 const CANAL_AP="http://192.168.4.1";
 const CANAL_WAN="http://192.168.1.8";
+const APP_LOCAL="http://127.0.0.1:5173/detector-de-sismos/";
+const APP_PUBLIC="https://gerard120464.github.io/detector-de-sismos/";
+const esHttps=typeof location!=="undefined"&&location.protocol==="https:";
+
+function localProxy(){
+ if(typeof location==="undefined") return "";
+ if(location.hostname!=="127.0.0.1"&&location.hostname!=="localhost") return "";
+ return `${location.protocol}//${location.host}/esp32`;
+}
 
 function espBases(){
  const bases:string[]=[];
  const add=(u:string)=>{const x=(u||"").replace(/\/$/,"");if(x&&!bases.includes(x)) bases.push(x)};
- add(CANAL_WAN);
  add(CANAL_AP);
+ add(localProxy());
  add(localStorage.getItem("esp32_url")||"");
+ add(CANAL_WAN);
  add("http://192.168.1.22");
  return bases;
 }
@@ -21,23 +31,32 @@ type Onda={id:number;frecuencia_muestreo_hz:number;muestras:Punto[]};
 type WifiStatus={ap_ssid?:string;ap_ip?:string;sta_configured?:boolean;sta_ssid?:string;sta_connected?:boolean;sta_ip?:string;rssi?:number};
 type WifiNetwork={ssid:string;rssi?:number;seguridad?:number};
 
+const MSG_AP="Une el Wi‑Fi del PC a SISMOS-01 (clave Detector123). Luego pulsa Conectar y envía aquí el SSID y la clave de la red de casa. Si esa red cambia, vuelve a SISMOS-01 y mándala de nuevo.";
+
 function mensajeEsp(e:unknown){
- return e instanceof Error?e.message:String(e);
+ if(esHttps) return "Esta página HTTPS no puede hablar con el ESP32. Abre "+APP_LOCAL+" con el PC unido a SISMOS-01 y envía la red de casa desde la app.";
+ const msg=e instanceof Error?e.message:String(e);
+ if(/abort/i.test(msg)||(e instanceof Error&&e.name==="AbortError")||/no encontrado|no está/i.test(msg)) return MSG_AP;
+ return msg;
 }
 
 async function espFetch(path:string,options?:RequestInit){
- let lastError:unknown=null;
- const ms=path.startsWith("/evento")?60000:2500;
- for(const base of espBases()){
+ const bases=espBases();
+ const ms=path.startsWith("/evento")?60000:localProxy()?12000:2500;
+ const tryOne=async(base:string)=>{
   const ctl=new AbortController();
-  const timer=setTimeout(()=>ctl.abort(),ms);
+  const timer=setTimeout(()=>ctl.abort(),base.includes("/esp32")?15000:ms);
   try{
    const r=await fetch(`${base}${path}`,{cache:"no-store",...options,signal:ctl.signal});
+   if(r.status===502) throw Error("ESP32 no encontrado");
    return r;
-  }catch(e){lastError=e}
-  finally{clearTimeout(timer)}
+  }finally{clearTimeout(timer)}
+ };
+ try{
+  return await Promise.any(bases.map(tryOne));
+ }catch{
+  throw Error(MSG_AP);
  }
- throw lastError instanceof Error?lastError:Error("No se pudo comunicar con el ESP32");
 }
 
 function Grafica({onda}:{onda:Onda}){
@@ -529,17 +548,45 @@ export default function App(){
  }
  async function request(path:string,options?:RequestInit){try{const r=await espFetch(`${path}`,{cache:"no-store",...options});if(!r.ok)throw Error(`HTTP ${r.status}`);const t=await r.text();setResponse(t);return t}catch(e){setResponse(e instanceof Error?`${e.name}: ${e.message}`:String(e));throw e}}
  async function buscarRedes(){setEscaneando(true);setWifiMsg("Iniciando escaneo en el ESP32...");setRedes([]);try{const r=await espFetch(`/wifi/scan?t=${Date.now()}`,{cache:"no-store"});if(!r.ok)throw Error(`HTTP ${r.status}`);setWifiMsg("Escaneo iniciado. Esperando resultado...");for(let i=0;i<15;i++){await new Promise(x=>setTimeout(x,1500));const q=await espFetch(`/wifi/scan?resultado=1&t=${Date.now()}`,{cache:"no-store"});if(!q.ok)throw Error(`HTTP ${q.status}`);const d=await q.json();if(d.estado==="LISTO"){setRedes(d.redes??[]);setWifiMsg(`${(d.redes??[]).length} redes encontradas.`);return}if(d.estado==="SIN_RESULTADO"){setWifiMsg("El ESP32 terminó el escaneo sin resultados.");return}}setWifiMsg("El escaneo sigue en curso. Pulse Buscar redes nuevamente en unos segundos.");}catch(e){setWifiMsg(`Error al escanear: ${e instanceof Error?e.message:String(e)}`)}finally{setEscaneando(false)}}
- async function guardarWifi(){if(!ssid){setWifiMsg("Seleccione una red.");return}setWifiMsg("Enviando configuración al ESP32...");try{const body=new URLSearchParams({ssid,password:clave});const r=await espFetch(`/wifi/config`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});if(!r.ok)throw Error(`HTTP ${r.status}`);setResponse(await r.text());setWifiMsg("Configuración guardada. El ESP32 está conectándose a Internet.");setTimeout(()=>void cargarWifi(),1500);setTimeout(()=>void cargarWifi(),5000)}catch(e){setWifiMsg(`Error: ${mensajeEsp(e)}`)}}
+ async function guardarWifi(){
+  if(!ssid){setWifiMsg("Seleccione una red.");return}
+  if(esHttps){setWifiMsg("Error: "+mensajeEsp(Error("https")));return}
+  setWifiMsg("Enviando configuración al ESP32...");
+  try{
+   const body=new URLSearchParams({ssid,password:clave});
+   const r=await espFetch(`/wifi/config`,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
+   if(!r.ok)throw Error(`HTTP ${r.status}`);
+   setResponse(await r.text());
+   setWifiMsg("Red enviada al ESP32. SISMOS-01 sigue activo; el módulo se une a esa red. Si cambias de red de casa, vuelve a SISMOS-01 y envía el nuevo SSID y clave.");
+   setTimeout(()=>void cargarWifi(),1500);
+   setTimeout(()=>void cargarWifi(),5000);
+  }catch(e){setWifiMsg(`Error: ${mensajeEsp(e)}`)}
+ }
+ async function olvidarWifi(){
+  setWifiMsg("Olvidando la red de casa en el ESP32...");
+  try{
+   const r=await espFetch(`/wifi/forget`,{method:"POST"});
+   if(!r.ok)throw Error(`HTTP ${r.status}`);
+   setSsid("");setClave("");
+   setWifiMsg("Red de casa borrada. Une el PC a SISMOS-01 y envía el nuevo SSID y clave.");
+   await cargarWifi();
+  }catch(e){setWifiMsg(`Error: ${mensajeEsp(e)}`)}
+ }
  useEffect(()=>{if(escaneando)return;let busy=false;const timer=setInterval(async()=>{if(busy)return;busy=true;try{const d=await estado();const id=d.ultimo_evento?.id as number|undefined;const seleccionado=eventoSeleccionado;if(id&&id!==lastId.current&&!seleccionado){setEventoSeleccionado(null);await cargarOnda(id);await cargarHistorial()}else if(id&&id!==lastId.current&&seleccionado===id){await cargarOnda(id);await cargarHistorial()}else if(id&&id!==lastId.current){await cargarHistorial()}await cargarWifi()}catch{setConnected(false);setStatus("Buscando ESP32...")}finally{busy=false}},2000);return()=>clearInterval(timer)},[escaneando,eventoSeleccionado]);
 
- return <main><header><div><h1>Detector de Sismos</h1><p>App actual · gráfica con dial de tiempo y parámetros del ESP32</p></div><span className={connected?"ok":"offline"}>{status}</span></header><section className="dashboard-grid"><div className="status-card"><span className="status-title">Estado del detector</span><strong className={connected?"status-online":"status-offline"}>{connected?"OPERATIVO":"DESCONECTADO"}</strong><small>DETECTOR-SISMOS-01</small></div><div className="status-card"><span className="status-title">Red local</span><strong>SISMOS-01</strong><small>{wifi?.ap_ip||"192.168.4.1"}</small></div><div className="status-card"><span className="status-title">Internet</span><strong className={wifi?.sta_connected?"status-online":"status-offline"}>{wifi?.sta_connected?"CONECTADO":"NO CONECTADO"}</strong><small>{wifi?.sta_ip||"Sin IP"}</small></div><div className="status-card"><span className="status-title">Último evento</span><strong>{evento?`#${evento.id}`:"—"}</strong><small>{evento?.nivel||"Sin eventos"}</small></div></section>
- <section className="card"><h2>Detector</h2><p className="device">DETECTOR-SISMOS-01</p><p>Red Wi-Fi local: <strong>SISMOS-01</strong> · clave <strong>Detector123</strong></p>
- <p className="muted">Dos canales a la vez: <strong>AP</strong> {CANAL_AP} (SISMOS-01) y <strong>WAN</strong> {CANAL_WAN} (red TITO). La app prueba los dos en paralelo.</p>
- <label className="field"><span>IP extra (opcional)</span><input value={espUrl} onChange={e=>setEspUrl(e.target.value)} placeholder={CANAL_WAN}/></label>
+ return <main><header><div><h1>Detector de Sismos</h1><p>App actual · gráfica con dial de tiempo y parámetros del ESP32</p></div><span className={connected?"ok":"offline"}>{status}</span></header>
+ {esHttps&&<section className="card"><p className="error" style={{margin:0}}>Esta es la app oficial ({APP_PUBLIC}). HTTPS no puede hablar con el ESP32. Para SISMOS-01, red de casa y gráfica abre <a href={APP_LOCAL} style={{color:"#8fb4ff"}}>{APP_LOCAL}</a>.</p></section>}<section className="dashboard-grid"><div className="status-card"><span className="status-title">Estado del detector</span><strong className={connected?"status-online":"status-offline"}>{connected?"OPERATIVO":"DESCONECTADO"}</strong><small>DETECTOR-SISMOS-01</small></div><div className="status-card"><span className="status-title">Red local</span><strong>SISMOS-01</strong><small>{wifi?.ap_ip||"192.168.4.1"}</small></div><div className="status-card"><span className="status-title">Internet</span><strong className={wifi?.sta_connected?"status-online":"status-offline"}>{wifi?.sta_connected?"CONECTADO":"NO CONECTADO"}</strong><small>{wifi?.sta_ip||"Sin IP"}</small></div><div className="status-card"><span className="status-title">Último evento</span><strong>{evento?`#${evento.id}`:"—"}</strong><small>{evento?.nivel||"Sin eventos"}</small></div></section>
+ <section className="card"><h2>Detector</h2><p className="device">DETECTOR-SISMOS-01</p>
+ <ol className="muted" style={{paddingLeft:18,lineHeight:1.5}}>
+  <li>En el PC, únete a <strong>SISMOS-01</strong> (clave <strong>Detector123</strong>).</li>
+  <li>Pulsa <strong>Conectar por Wi-Fi</strong> (el ESP es {CANAL_AP}).</li>
+  <li>Abajo, busca redes, escribe SSID y clave de la casa y pulsa <strong>Enviar red al ESP32</strong>. Si la red cambia, repite este paso.</li>
+ </ol>
+ <label className="field"><span>IP extra (opcional)</span><input value={espUrl} onChange={e=>setEspUrl(e.target.value)} placeholder={CANAL_AP}/></label>
  <div className="buttons"><button onClick={conectar}>Conectar por Wi-Fi</button></div></section>
  <ConfigDetector connected={connected} config={config} onLeer={leerConfig} onGuardar={guardarConfig}/>
  <section className="card"><h2>Wi-Fi de Internet</h2>
- <p className="muted">El ESP32 permanece en SISMOS-01 y a la vez se une a TITO. Puedes hablarle por cualquiera de los dos.</p>
+ <p className="muted">Desde SISMOS-01 envías SSID y clave de la red de casa. El ESP32 se queda en SISMOS-01 y además se une a esa red. Para cambiar de red, vuelve a SISMOS-01 y envía los datos nuevos.</p>
  <div className="wifi-status-grid">
   <div><strong>Red de casa</strong><span>{wifi?.sta_ssid||"Sin configurar"}</span></div>
   <div><strong>Internet</strong><span className={wifi?.sta_connected?"status-good":"status-warn"}>{wifi?.sta_connected?"Conectado":"No conectado"}</span></div>
@@ -550,7 +597,7 @@ export default function App(){
  {redes.length>0&&<label className="field"><span>Redes encontradas</span><select value={ssid} onChange={e=>setSsid(e.target.value)}><option value="">Seleccione una red...</option>{redes.map((r,i)=><option key={`${r.ssid}-${i}`} value={r.ssid}>{r.ssid||"(oculta)"} {typeof r.rssi==="number"?`· ${r.rssi} dBm`:""}</option>)}</select></label>}
  <label className="field"><span>Nombre de la red (SSID)</span><input value={ssid} onChange={e=>setSsid(e.target.value)} placeholder="Ej. MiWifi" autoComplete="off"/></label>
  <label className="field"><span>Contraseña</span><input type="password" value={clave} onChange={e=>setClave(e.target.value)} placeholder="Contraseña de la red Wi-Fi" autoComplete="off"/></label>
- <div className="buttons"><button disabled={!ssid.trim()} onClick={guardarWifi}>Conectar ESP32 a Internet</button></div>{wifiMsg&&<p className={wifiMsg.startsWith("Error")?"error":"wifi-message"}>{wifiMsg}</p>}</section>
+ <div className="buttons"><button disabled={!ssid.trim()} onClick={guardarWifi}>Enviar red al ESP32</button><button onClick={olvidarWifi}>Olvidar red de casa</button></div>{wifiMsg&&<p className={wifiMsg.startsWith("Error")?"error":"wifi-message"}>{wifiMsg}</p>}</section>
  <section className="card"><h2>Evento registrado</h2>{!evento?<p className="muted">No hay eventos registrados.</p>:<><div className="event-summary"><strong>EVENTO #{evento.id}</strong><span>{evento.nivel??"-"}</span><span>{Number(evento.duracion_s??0).toFixed(2)} s</span><span>PGA {Number(evento.pga_t??0).toFixed(5)} g</span><span>RMS {Number(evento.rms??0).toFixed(5)} g</span><span>{Number(evento.frecuencia_hz??0).toFixed(3)} Hz</span></div>{onda?<Grafica onda={onda}/>:<p className="muted">Cargando forma de onda...</p>}{ondaError&&<p className="error">Forma de onda: {ondaError}</p>}</>}</section>
  <section className="card"><h2>Historial de eventos</h2>{historial.length===0?<p className="muted">No hay eventos históricos registrados.</p>:<div className="history-wrap"><table className="history-table"><thead><tr><th>ID</th><th>Hora</th><th>Nivel</th><th>Duración</th><th>PGA</th><th>RMS</th><th>Frecuencia</th></tr></thead><tbody>{historial.map((e,i)=><tr key={e.id} onClick={async()=>{setEventoSeleccionado(e.id);const h=historial.find(x=>x.id===e.id);if(h){setEvento({id:h.id,duracion_s:h.duracion_s,pga_t:h.pga_t,rms:h.rms,frecuencia_hz:h.frecuencia_hz,nivel:h.nivel})}await cargarOnda(e.id)}} className={`${i===0?"history-current ":""}${eventoSeleccionado===e.id?"history-selected":""}`}><td>#{e.id}</td><td>{e.hora_inicio??"SIN_RTC"}</td><td><span className="history-level">{e.nivel??"-"}</span></td><td>{Number(e.duracion_s??0).toFixed(2)} s</td><td>{Number(e.pga_t??e.pga_h??0).toFixed(5)} g</td><td>{Number(e.rms??0).toFixed(5)} g</td><td>{Number(e.frecuencia_hz??0).toFixed(3)} Hz</td></tr>)}</tbody></table></div>}<p className="muted history-note">Últimos {historial.length} eventos conservados por el ESP32. Haz clic en un evento para seleccionarlo.</p></section>
  <section className="card"><h2>Prueba de comunicación</h2><div className="buttons"><button disabled={!connected} onClick={()=>request("/ping")}>PING</button><button disabled={!connected} onClick={()=>request("/estado")}>ESTADO</button></div><pre>{response||"Sin respuesta"}</pre></section></main>
